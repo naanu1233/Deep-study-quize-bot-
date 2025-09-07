@@ -1,7 +1,4 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
-
 import json
 import asyncio
 import random
@@ -14,7 +11,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
 
 # --- APIs aur Links ---
-TELEGRAM_API_KEY = os.getenv("TELEGRAM_API_KEY")
+TELEGRAM_API_KEY = "8361733654:AAH2RDNASaVilx_Htg9WE9QJEahIqlZLdco" # अपनी API Key यहाँ डालें
 YOUTUBE_LINK = "https://www.youtube.com/@sscwalistudy?sub_confirmation=1"
 
 # Bot, Dispatcher aur main function ko initialize karein
