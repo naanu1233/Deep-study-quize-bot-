@@ -17,7 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
+print("Loaded token:", TELEGRAM_API_KEY)
 # --- Load Environment Variables ---
 load_dotenv()
 TELEGRAM_API_KEY = os.getenv("TELEGRAM_API_KEY")
@@ -37,7 +37,6 @@ cached_topics = {"gk": {}, "ca": {}}
 
 # --- Cache Topics ---
 def load_topics():
-    """Folders se topics ko memory mein load karta hai."""
     for folder, key in [("gk_topics", "gk"), ("current_affairs", "ca")]:
         path = os.path.join(os.getcwd(), folder)
         if os.path.isdir(path):
@@ -49,7 +48,6 @@ def load_topics():
                             data = json.load(f)
                         title = data.get("title", filename.replace(".json", "").replace("_", " ").title())
                         
-                        # Validate JSON format
                         if "questions" not in data or not isinstance(data["questions"], list):
                             logging.warning(f"Invalid JSON structure in {filename}, skipped.")
                             continue
@@ -65,7 +63,6 @@ load_topics()
 
 # --- Utility Functions ---
 def get_main_menu_markup():
-    """Mukhya menu buttons banata hai."""
     builder = InlineKeyboardBuilder()
     builder.row(types.InlineKeyboardButton(text="🧠 GK TOPICS", callback_data="gk_menu"))
     builder.row(types.InlineKeyboardButton(text="📰 CURRENT AFFAIRS", callback_data="ca_menu"))
@@ -73,7 +70,6 @@ def get_main_menu_markup():
     return builder.as_markup()
 
 async def send_main_menu(chat_id):
-    """Mukhya menu bhejta hai."""
     motivation = random.choice([
         "Mehnat itni karo ki kismat bhi bol uthe, 'Le le beta, isme tera hi haq hai!'",
         "Sapne woh nahi jo hum sote huye dekhte hain, sapne woh hain jo hamein sone nahi dete.",
@@ -89,7 +85,6 @@ async def send_main_menu(chat_id):
     )
 
 async def send_question(user_id, chat_id):
-    """Agla quiz question bhejta hai."""
     state = user_states.get(user_id)
     if not state:
         await send_main_menu(chat_id)
@@ -104,7 +99,6 @@ async def send_question(user_id, chat_id):
 
     q = questions[idx]
 
-    # Validate question format
     if "question" not in q or "options" not in q or "answer" not in q:
         logging.error(f"Invalid question format: {q}")
         await bot.send_message(chat_id, "⚠️ Question format galat hai, skip kiya ja raha hai.")
@@ -115,7 +109,7 @@ async def send_question(user_id, chat_id):
     builder = InlineKeyboardBuilder()
     for option in q['options']:
         builder.row(types.InlineKeyboardButton(text=option, callback_data=f"answer_{option}"))
-    builder.row(types.InlineKeyboardButton(text="⏩ Skip Question", callback_data=f"skip_question"))
+    builder.row(types.InlineKeyboardButton(text="⏩ Skip Question", callback_data="skip_question"))
 
     sent_message = await bot.send_message(
         chat_id,
@@ -125,7 +119,6 @@ async def send_question(user_id, chat_id):
     state['last_message_id'] = sent_message.message_id
 
 async def start_quiz_from_file(user_id, chat_id, topic_path, topic_title):
-    """File se quiz shuru karta hai."""
     try:
         with open(topic_path, 'r', encoding='utf-8') as f:
             topic_data = json.load(f)
@@ -158,7 +151,6 @@ async def start_quiz_from_file(user_id, chat_id, topic_path, topic_title):
         await send_main_menu(chat_id)
 
 async def end_quiz(uid, chat_id):
-    """Quiz samapt hone par score bhejta hai."""
     state = user_states.pop(uid, None)
     if not state:
         return
@@ -175,13 +167,80 @@ async def end_quiz(uid, chat_id):
     )
     await send_main_menu(chat_id)
 
-# --- Handlers (same as before, with logs for errors) ---
-# [KEEP your handlers same, just add logging where needed]
+# --- Handlers ---
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    await send_main_menu(message.chat.id)
+
+@dp.callback_query(F.data == "gk_menu")
+async def show_gk_topics(callback: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    for filename, data in cached_topics["gk"].items():
+        builder.row(types.InlineKeyboardButton(text=data["title"], callback_data=f"gk_{filename}"))
+    builder.row(types.InlineKeyboardButton(text="⬅️ Back", callback_data="main_menu"))
+    await callback.message.edit_text("📘 GK Topics:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "ca_menu")
+async def show_ca_topics(callback: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    for filename, data in cached_topics["ca"].items():
+        builder.row(types.InlineKeyboardButton(text=data["title"], callback_data=f"ca_{filename}"))
+    builder.row(types.InlineKeyboardButton(text="⬅️ Back", callback_data="main_menu"))
+    await callback.message.edit_text("📰 Current Affairs:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "main_menu")
+async def back_to_menu(callback: types.CallbackQuery):
+    await callback.message.edit_text("⬅️ Back to Main Menu", reply_markup=get_main_menu_markup())
+
+@dp.callback_query(F.data.startswith("gk_"))
+async def start_gk_quiz(callback: types.CallbackQuery):
+    filename = callback.data.replace("gk_", "")
+    topic = cached_topics["gk"].get(filename)
+    if topic:
+        await start_quiz_from_file(callback.from_user.id, callback.message.chat.id, topic["path"], topic["title"])
+
+@dp.callback_query(F.data.startswith("ca_"))
+async def start_ca_quiz(callback: types.CallbackQuery):
+    filename = callback.data.replace("ca_", "")
+    topic = cached_topics["ca"].get(filename)
+    if topic:
+        await start_quiz_from_file(callback.from_user.id, callback.message.chat.id, topic["path"], topic["title"])
+
+@dp.callback_query(F.data.startswith("answer_"))
+async def handle_answer(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    state = user_states.get(user_id)
+    if not state:
+        await callback.answer("⚠️ Quiz state lost!")
+        return
+
+    selected = callback.data.replace("answer_", "")
+    current_q = state['questions'][state['current_q_index']]
+
+    state['attempted_questions'] += 1
+    if selected == current_q['answer']:
+        state['score'] += 1
+        state['correct_answers'] += 1
+        await callback.answer("✅ Sahi Jawab!")
+    else:
+        state['incorrect_answers'] += 1
+        await callback.answer(f"❌ Galat! Sahi jawab: {current_q['answer']}")
+
+    state['current_q_index'] += 1
+    await send_question(user_id, callback.message.chat.id)
+
+@dp.callback_query(F.data == "skip_question")
+async def skip_question(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    state = user_states.get(user_id)
+    if state:
+        state['current_q_index'] += 1
+        await send_question(user_id, callback.message.chat.id)
 
 # --- Main polling function ---
 async def main() -> None:
     logging.info("Bot started polling...")
-    await dp.start_polling(bot)
+    await dp.run_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
